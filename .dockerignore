@@ -1,0 +1,8 @@
+coverage
+deployment
+src
+.babelrc
+.eslintignore
+.eslintrc.json
+.gitignore
+.gitlab-ci.yml

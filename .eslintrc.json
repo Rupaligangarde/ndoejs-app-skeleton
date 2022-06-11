@@ -1,0 +1,42 @@
+{
+  "parser": "babel-eslint",
+    "extends": [
+  "eslint:recommended",
+  "plugin:prettier/recommended"
+],
+    "plugins": [
+  "import",
+  "prettier",
+  "jest"
+],
+    "overrides": [
+  {
+    "files": [
+      "src/**/*.{js}"
+    ],
+    "rules": {
+      "import/no-extraneous-dependencies": 0
+    }
+  }
+],
+    "rules": {
+  "import/extensions": [
+    "error",
+    "never"
+  ],
+      "import/no-extraneous-dependencies": 0,
+      "no-alert": 0,
+      "prettier/prettier": "warn",
+      "strict": 1
+},
+  "globals": {
+  "document": true,
+      "window": true
+},
+  "env": {
+  "es6": true,
+      "jest": true,
+      "node": true
+},
+  "root": true
+}

@@ -1,0 +1,195 @@
+---
+include:
+  - "https://falabella-gitlab.gitlab.io/ci-reuse/lint/markdown/.include.yml"
+  - "https://falabella-gitlab.gitlab.io/ci-reuse/lint/yaml/.include.yml"
+  - "https://falabella-gitlab.gitlab.io/ci-reuse/build/docker/.include.yml"
+  - "https://falabella-gitlab.gitlab.io/ci-reuse/lint/helm/.include.yml"
+  - "https://falabella-gitlab.gitlab.io/ci-reuse/deploy/gcloud/helm/.include.yml"
+  - project: "falabella-gitlab/ci-reuse/deploy/gcloud/helm3"
+    file: '.gitlab-ci.yml'
+  - project: 'falabella-gitlab/ci-reuse/audit/dependency-check'
+    ref: stable
+    file: '/template/.ci-template.yml'
+  - project: 'falabella-gitlab/ci-reuse/audit/clair'
+    ref: stable
+    file: '/template/.ci-template.yml'
+  - project: 'falabella-gitlab/ci-reuse/audit/nodejs-scan'
+    ref: stable
+    file: '/template/.ci-template.yml'
+
+
+variables:
+  YAMLLINT_INPUT: ".gitlab-ci.yml"
+  YAMLLINT_OPTS: '-c .config.yml'
+  CI_PROJECT_NAME: "stock-service"
+  HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}"
+  HELM_CONFIG: "deployment/charts/config"
+  PROJECT_ID: ${GCP_PROJECT_ID}
+  PROJECT_NAME: '${CI_PROJECT_NAME}'
+  DOCKER_BUILD_ARG: "--build-arg NPM_USERNAME --build-arg NPM_TOKEN"
+  NPM_USERNAME: ${NPM_USERNAME}
+  NPM_TOKEN: ${NPM_TOKEN}
+  DC_TARGET_LANG: "node"
+  VERACODE_ZIP: 'true'
+
+stages:
+  - install
+  - lint
+  - test
+  - build
+  - audit
+  - deploy
+  - dev-deploy
+  - staging-deploy
+  - production-deploy
+
+dockerfile:
+  tags:
+    - "catalyst-docker-runner"
+
+helm:
+  tags:
+    - "catalyst-docker-runner"
+
+yaml:
+  tags:
+    - "catalyst-docker-runner"
+
+markdown:
+  tags:
+    - "catalyst-docker-runner"
+
+
+install:
+  stage: install
+  image: mhart/alpine-node:v14
+  script:
+    - npm ci --no-audit
+    - npm run build --production
+  artifacts:
+    paths:
+      - node_modules/
+      - dist/
+  cache:
+    paths:
+      - node_modules/
+      - dist/
+  tags:
+    - "catalyst-docker-runner"
+
+node:
+  stage: lint
+  image: mhart/alpine-node:14
+  before_script:
+    - apk add --no-cache make gcc g++ python
+    - npm config set @falabella-gitlab:registry=https://gitlab.com/api/v4/packages/npm/ && \
+    - export AUTH=$(echo "$NPM_TOKEN")
+    - npm config set "//gitlab.com/api/v4/packages/npm/:_authToken=$NPM_TOKEN" && \
+    - npm config set "//gitlab.com/api/v4/projects/23121247/packages/npm/:_authToken=$NPM_TOKEN" && \
+    - npm ci --no-audit
+  cache:
+    paths:
+      - node_modules
+  script:
+    - npm run lint
+  coverage: /^All files[^|]*\|[^|]*\s+([\d\.]+)/
+  tags:
+    - "catalyst-docker-runner"
+  only:
+    - master
+
+npm:
+  stage: audit
+  dependencies:
+    - install
+  image: mhart/alpine-node:14
+  script:
+    - npm audit fix
+  tags:
+    - catalyst-docker-runner
+
+unit-tests:
+  stage: test
+  dependencies:
+    - install
+  image: mhart/alpine-node:14
+  script:
+    - npm run test -- --silent
+  coverage: /^All files[^|]*\|[^|]*\s+([\d\.]+)/
+  tags:
+    - catalyst-docker-runner
+
+.deploy_template: &deploy_template
+  extends: .helm_deploy
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.enabled=true
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.ENVIRONMENT=${CI_ENVIRONMENT_NAME}
+      --set-string environmentVariables.GCLOUD_PROJECT=${GCP_PROJECT_ID}
+      --values ${HELM_CONFIG}/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - master
+    - tags
+  tags:
+    - catalyst-docker-runner
+
+deploy_dev:
+  <<: *deploy_template
+  stage: dev-deploy
+  environment:
+    name: dev
+  tags:
+    - "catalyst-docker-runner"
+  only:
+    - master
+    - branches
+
+deploy_staging:
+  <<: *deploy_template
+  stage: staging-deploy
+  environment:
+    name: staging
+  tags:
+    - "catalyst-docker-runner"
+  only:
+    - master
+    - tags
+  when: manual
+
+deploy_production:
+  <<: *deploy_template
+  stage: production-deploy
+  environment:
+    name: production
+  tags:
+    - "catalyst-docker-runner"
+  only:
+    - tags
+  when: manual
+
+clair-analysis:
+  before_script:
+    - export SCAN_IMAGE="${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHA:0:8}"
+    - export REGISTRY_USER='gitlab-ci-token'
+    - export REGISTRY_PASSWORD="${CI_BUILD_TOKEN}"
+  tags:
+    - "catalyst-docker-runner"
+
+dependency-check-analysis:
+  variables:
+    DC_TARGET_LANG: 'node'
+  tags:
+    - "catalyst-docker-runner"
+
+dependency-check-prd:
+  variables:
+    DC_TARGET_LANG: 'node'
+  tags:
+    - "catalyst-docker-runner"
